@@ -1,6 +1,6 @@
 {
   "name": "dsh-jev-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Ask Jev (TypeSafe System One) typed questions from DeepSeek Harness: batch judgements with probabilities, configured per user in Settings.",
   "type": "module",
   "author": "Raúl Lázaro Sánchez (https://github.com/RaulLazaro)",

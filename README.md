@@ -76,11 +76,31 @@ Open **Settings → Plugins → Jev**.
 | --- | --- | --- | --- |
 | TypeSafe (direct) | `https://api.typesafe.ai/v1/systemone` | `jev-latest` | `TYPESAFE_API_KEY` |
 | Vercel AI Gateway | `https://ai-gateway.vercel.sh/typesafe/v1/systemone` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
+| Laya Studio | `https://api.laya.studio/v1/systemone` | *auto-routed* | `LAYA_API_KEY` |
 | Custom | your own URL | `jev-latest` | `JEV_API_KEY` |
 
 Each provider has its own key, so switching provider switches which credential is
 used. If you already exported the matching environment variable, no key needs to
 be saved.
+
+**Laya Studio** is a different model — [Laya](https://github.com/NandhaKishorM/laya),
+an open-source (Apache-2.0) System One encoder — served by an independent host over the
+same `/v1/systemone` wire. Same question types, same answer shape, ~30% lower input price
+($0.0294 vs $0.042 per 1M tokens). The plugin applies its published bounds for you
+(32 questions per request, 64 options per question) and prices the ledger at its own rate.
+Know what you are trading: Laya reads only the first **512 tokens** (English) or **1,024**
+(multilingual) of the state per question and truncates the rest silently — put the decisive
+text first; it degrades on large label sets (published: 0.425 on Banking77 where Jev holds
+0.870, so keep choices under ~20 options); and its `confidence` uses a different formula
+(normalised entropy), so a threshold tuned against Jev does not carry over. Send `model`
+empty (the default) and its router picks a checkpoint; pin `english`, `multilingual` or
+`typed-decisions` only deliberately.
+
+Every provider speaks the same contract, so **a self-hosted Laya works too**: point
+*Custom* at your own server (e.g. `laya-serve`, `ollaya` or `laya-server`, all
+Jev-compatible) at `http://127.0.0.1:<port>/v1/systemone` with any key. A 421M encoder fits
+on a small CPU-only VPS — expect roughly a second per request on 2 vCPUs rather than the
+32–40 ms a T4 GPU gives.
 
 > **Evaluation is not served through the OpenAI- or Anthropic-compatible
 > endpoints.** Both providers above expose a TypeSafe-compatible
@@ -133,12 +153,12 @@ The `jev` settings namespace accepts:
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Register the `jev` tool. |
-| `provider` | `typesafe` | `typesafe`, `vercel-gateway` or `custom`. |
+| `provider` | `typesafe` | `typesafe`, `vercel-gateway`, `laya-studio` or `custom`. |
 | `model` | *(provider default)* | Model id override. |
 | `baseUrl` | — | Required by the `custom` provider. |
 | `timeoutMs` | `60000` | Per-attempt request deadline. |
 | `maxStateChars` | `40000` | Rejects oversized `state` with a message naming the limit. |
-| `maxQuestions` | `200` | Rejects oversized question maps. |
+| `maxQuestions` | `200` | Rejects oversized question maps — the provider's own limit wins when it is lower (Laya Studio: 32). |
 | `dataDir` | `<DSH_HOME>/dsh-jev` | Where the judgment ledger lives. |
 | `dailyCallLimit` | `500` | Judgments per local day; `0` disables the cap. |
 | `dailyTokenLimit` | `5000000` | Input tokens per local day; `0` disables the cap. |

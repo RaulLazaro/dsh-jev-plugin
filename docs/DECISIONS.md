@@ -143,6 +143,45 @@ the two classes cannot gate anything.
 `jev_find_tools` is the same shape with a smaller catalogue, so the same objection applies until
 someone measures it. Measuring it is cheap and welcome — this file is not a substitute for that.
 
+## Adopted: Laya Studio as a first-class provider
+
+Laya is the open-weight (Apache-2.0) competitor to Jev: a ModernBERT-large encoder with an
+option-marker head, served by an independent Swiss host over the **same `/v1/systemone` wire
+protocol** ([wire-compatible](https://laya.studio/docs/jev-migration)). Adding it as a provider
+row is a dozen lines, and it is what the provider abstraction in this plugin was always for.
+
+What first-class support buys over pointing *Custom* at the URL:
+
+- **Honest money.** The ledger now prices every record at its provider's rate
+  ($0.0294 for Laya Studio, $0.042 for the Jev providers). Days that mix providers sum
+  per record instead of applying one global rate — the whole point of spend accounting.
+- **The bounds are applied, not documented.** Laya Studio answers 33 questions with a 400 and
+  65 options with a 422. The tool refuses before the request leaves, naming the provider and
+  the number.
+- **The real caveats are visible where the choice is made.** Settings shows Laya's note and the
+  auto-routing (its `model` is sent empty so its own router picks; an override can still pin
+  `english` / `multilingual` / `typed-decisions`).
+
+What was **not** adopted, deliberately:
+
+- **No default switch.** Jev stays the default. Laya's published weaknesses — 512–1,024
+  tokens of state per question (truncated silently), and a large-label cliff (Banking77 0.425
+  vs Jev's 0.870) — hit exactly the workloads this tool exists for: judging long tool outputs
+  and wide option lists. The 30% price saving on this plugin's own measured traffic (~11k
+  input tokens per pruned judgment) is fractions of a cent; it is not a reason to trade
+  context for it.
+- **No per-provider confidence normalisation.** Laya computes `confidence` as
+  1 − normalised entropy; Jev uses a max-probability formula. Rescaling one to imitate the
+  other would invent a precision neither has. The plugin's rule — *rank, never threshold* —
+  already holds across providers.
+- **No `action.act_probability` surfacing.** Laya returns it, and its own tracker says it
+  "carries no usable signal yet". Ignored until that changes.
+
+Self-hosting needs no code at all: *Custom* + a Jev-compatible Laya server (the package ships
+`laya-serve`; `ollaya` and 1Panel's `laya-server` implement the same wire). The weights are
+~1.7 GB (421M English + 322M multilingual), which runs CPU-only on a modest VPS — that path
+is a deployment choice, and the plugin just points at whatever speaks the contract.
+
 ## Out of scope: the pre-execution safety gate
 
 `7starsseeker/dsh-jev-guard` mounts `tools/pre-execute` and puts one Jev question in front of every

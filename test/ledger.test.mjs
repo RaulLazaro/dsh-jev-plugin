@@ -217,3 +217,23 @@ test('a cap of zero means no cap', async () => {
     globalThis.fetch = original
   }
 })
+
+// ---------------------------------------------------------------- pricing per provider
+
+test('costUsd accepts a provider rate and falls back to the Jev list price', () => {
+  assert.equal(costUsd(1_000_000, 0.0294), 0.0294)
+  assert.equal(costUsd(1_000_000, undefined), USD_PER_MTOK_INPUT)
+  assert.equal(costUsd(1_000_000, 0), USD_PER_MTOK_INPUT, 'a zero rate is bogus, not free')
+  assert.equal(costUsd(1_000_000, 'nonsense'), USD_PER_MTOK_INPUT)
+})
+
+test('a day mixing providers is priced per record, not per token total', () => {
+  const ledger = new Ledger('')
+  const now = ledger.now()
+  ledger.append({ ok: true, inputTokens: 1_000_000, provider: 'typesafe' })
+  ledger.append({ ok: true, inputTokens: 1_000_000, provider: 'laya-studio', usdPerMtok: 0.0294 })
+  const s = ledger.summary(now)
+  assert.equal(s.inputTokens, 2_000_000)
+  assert.equal(s.costUsd.toFixed(4), (0.042 + 0.0294).toFixed(4))
+  assert.equal(s.total.costUsd.toFixed(4), (0.042 + 0.0294).toFixed(4))
+})

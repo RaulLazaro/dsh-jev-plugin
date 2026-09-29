@@ -339,3 +339,98 @@ test('every provider declares a credential name and a URL (except custom)', () =
     if (id !== 'custom') assert.match(provider.url, /^https:\/\//, `${id} needs an https URL`)
   }
 })
+
+// ---------------------------------------------------------------- Laya Studio
+
+test('resolveEndpoint resolves laya-studio with its own model and price', () => {
+  const endpoint = resolveEndpoint({ provider: 'laya-studio' })
+  assert.equal(endpoint.error, undefined)
+  assert.equal(endpoint.url, 'https://api.laya.studio/v1/systemone')
+  assert.equal(endpoint.credential, 'LAYA_API_KEY')
+  assert.equal(endpoint.model, '', 'an empty model keeps Laya routing')
+  assert.equal(endpoint.pricePerMtok, 0.0294)
+  assert.deepEqual(endpoint.limits, { maxQuestions: 32, maxOptions: 64 })
+  // A model override can still pin one checkpoint.
+  assert.equal(resolveEndpoint({ provider: 'laya-studio', model: 'multilingual' }).model, 'multilingual')
+})
+
+test('callJev omits the model field only when it is empty', async () => {
+  const seen = []
+  const fetchImpl = async (url, init) => {
+    seen.push(JSON.parse(init.body))
+    return new Response(JSON.stringify({ answers: {}, usage: {} }), { status: 200 })
+  }
+  await callJev({
+    url: 'https://api.laya.studio/v1/systemone', model: '', apiKey: 'k',
+    state: 's', questions: { q: { type: 'noul', instructions: 'x' } }, fetchImpl,
+  })
+  assert.equal('model' in seen[0], false, 'omitted model keeps Laya\'s own routing')
+  await callJev({
+    url: 'https://api.laya.studio/v1/systemone', model: 'multilingual', apiKey: 'k',
+    state: 's', questions: { q: { type: 'noul', instructions: 'x' } }, fetchImpl,
+  })
+  assert.equal(seen[1].model, 'multilingual')
+})
+
+test('validateQuestions caps options per question and names the bound', () => {
+  const make = (n) => {
+    const criteria = {}
+    for (let i = 0; i < n; i++) criteria[`o${i}`] = 'option'
+    return { q: { type: 'choice', instructions: 'x', criteria } }
+  }
+  // No cap by default: 100 options still validates.
+  assert.equal(validateQuestions(make(100), 200, 0).q.type, 'choice')
+  // Exactly at the cap passes; one over it is refused by name.
+  assert.equal(validateQuestions(make(64), 200, 64).q.type, 'choice')
+  assert.throws(
+    () => validateQuestions(make(65), 200, 64, 'the laya-studio provider'),
+    /questions\.q\.criteria has 65 options; the laya-studio provider allows 64/,
+  )
+})
+
+test('the tool applies the provider question cap before any request', async () => {
+  const original = globalThis.fetch
+  let called = 0
+  globalThis.fetch = async () => { called++; return new Response('{}', { status: 200 }) }
+  try {
+    const tool = makeTool(
+      () => ({ resolve: async () => ({ value: 'k' }) }),
+      () => ({ provider: 'laya-studio' }),
+    )
+    const questions = {}
+    for (let i = 0; i < 33; i++) questions[`q${i}`] = { type: 'noul', instructions: 'x' }
+    await assert.rejects(
+      tool.execute({ state: 's', questions }),
+      /too many questions \(33\); the laya-studio provider allows 32/,
+    )
+    assert.equal(called, 0, 'a request the provider would reject must not leave')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('a laya-studio call is recorded at the laya rate, attributed to auto', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ answers: { q: { type: 'noul', noul: 1 } }, usage: { input_tokens: 1_000_000 } }),
+    { status: 200 },
+  )
+  try {
+    const { Ledger } = await import('../lib/ledger.js')
+    const ledger = new Ledger('')
+    const tool = makeTool(
+      () => ({ resolve: async () => ({ value: 'k' }) }),
+      () => ({ provider: 'laya-studio' }),
+      () => ledger,
+    )
+    await tool.execute({ state: 's', questions: { q: { type: 'noul', instructions: 'x' } } })
+    const rec = ledger.records[0]
+    assert.equal(rec.provider, 'laya-studio')
+    assert.equal(rec.usdPerMtok, 0.0294)
+    // The response carried no model, so the record keeps the routing label.
+    assert.equal(rec.model, 'auto')
+    assert.equal(ledger.summary().costUsd.toFixed(4), '0.0294')
+  } finally {
+    globalThis.fetch = original
+  }
+})
