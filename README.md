@@ -154,7 +154,7 @@ The `jev` settings namespace accepts:
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Register the `jev` tool. |
-| `provider` | `typesafe` | `typesafe`, `vercel-gateway`, `laya-studio` or `custom`. |
+| `provider` | `typesafe` | `typesafe`, `vercel-gateway`, `laya-studio`, `opencode-zen` or `custom`. |
 | `model` | *(provider default)* | Model id override. |
 | `baseUrl` | — | Required by the `custom` provider. |
 | `timeoutMs` | `60000` | Per-attempt request deadline. |
@@ -202,10 +202,14 @@ sort by and not to compare against a fixed number. See
 
 - **The upstream answers `429` under load** ("the upstream provider is currently
   experiencing high demand"). The plugin retries with a 1s → 25s backoff and
-  honours `Retry-After`; expect occasional slow calls and do not treat a retry as
-  a failure.
+  honours `Retry-After` up to 30 s; a longer window (a free tier has asked for
+  hours) fails immediately, naming the wait, instead of freezing the session for
+  it. Cancelling the turn stops the retries — including the backoff sleep — at
+  once. Expect occasional slow calls and do not treat a retry as a failure.
 - A rejected credential (401/403) is reported with a pointer to
   Settings → Jev rather than a raw status code.
+- **The API key never leaves the process**: it is stripped from error messages
+  before they reach the model, the ledger or the bridge.
 - The Settings bridge is same-origin and **loopback-only**.
 
 ## Verify it works
@@ -245,9 +249,10 @@ npm test          # node --test
 ```
 
 The suite covers endpoint resolution, question validation messages, answer
-formatting, key precedence and the retry policy, plus the tool's own wiring:
-that it reads the credentials service through the lazy accessor on every call
-rather than capturing it once at registration. `lib/index.js` imports nothing
+formatting, key precedence (including trimming a padded key) and the retry
+policy — cancellation, the `Retry-After` cap and credential redaction — plus the
+tool's own wiring: that it reads the credentials service through the lazy
+accessor on every call rather than capturing it once at registration. `lib/index.js` imports nothing
 but `@deepseek-ai/schemastery`, declared as a peer dependency along with
 `@deepseek-ai/cordis` — the host supplies both.
 
