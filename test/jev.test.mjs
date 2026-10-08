@@ -14,7 +14,9 @@ import {
   PROVIDERS,
   formatAnswers,
   isLoopbackRequest,
+  makeBridgeRoutes,
   makeTool,
+  redactSecret,
   resolveEndpoint,
   resolveApiKey,
   validateQuestions,
@@ -90,6 +92,32 @@ test('validateQuestions rejects an empty, non-object or oversized map', () => {
   assert.throws(() => validateQuestions({ a: {}, b: {} }, 1), /too many questions \(2\)/)
 })
 
+test('validateQuestions demands a non-empty string instructions', () => {
+  // A blank, padded or non-string `instructions` used to pass validation and
+  // surface as a raw provider 400 (or as a paid call that judges nothing).
+  assert.throws(
+    () => validateQuestions({ q: { type: 'noul', instructions: '' } }),
+    /questions\.q\.instructions must be a non-empty string/,
+  )
+  assert.throws(() => validateQuestions({ q: { type: 'noul', instructions: '   ' } }), /non-empty string/)
+  assert.throws(() => validateQuestions({ q: { type: 'noul', instructions: { hint: 'x' } } }), /non-empty string/)
+  // A padded-but-real instruction is the caller's data: pass it through.
+  assert.equal(validateQuestions({ q: { type: 'noul', instructions: ' ok ' } }).q.instructions, ' ok ')
+})
+
+test('validateQuestions keeps a question named __proto__ instead of dropping it', () => {
+  // A JSON blob under judgement can plausibly carry that key. `out[key] = entry`
+  // hit Object.prototype's setter: the question vanished and the model was told
+  // "(no answer)" — or the provider answered 400 for an empty question map.
+  const raw = JSON.parse(
+    '{"__proto__":{"type":"noul","instructions":"x"},"plain":{"type":"noul","instructions":"y"}}',
+  )
+  const out = validateQuestions(raw)
+  assert.deepEqual(Object.keys(out), ['__proto__', 'plain'], 'every question must survive validation')
+  assert.equal(Object.getPrototypeOf(out), Object.prototype, 'the question must not hijack the prototype')
+  assert.equal(JSON.parse(JSON.stringify(out)).__proto__.type, 'noul', 'it must reach the provider')
+})
+
 test('formatAnswers renders every answer type and a usage footer', () => {
   const text = formatAnswers(
     {
@@ -137,6 +165,20 @@ test('resolveApiKey survives a credentials store that throws', async () => {
     },
   }
   assert.equal(await resolveApiKey(broken, 'TYPESAFE_API_KEY', 'from-settings'), 'from-settings')
+})
+
+test('resolveApiKey trims the key and treats whitespace as missing', async () => {
+  // A key pasted with a stray newline (a common .env accident) would become an
+  // invalid header; a whitespace-only value must read as "not configured".
+  process.env.JEV_TRIM_TEST_KEY = '  sk-padded-value\n'
+  assert.equal(await resolveApiKey(undefined, 'JEV_TRIM_TEST_KEY', undefined), 'sk-padded-value')
+  delete process.env.JEV_TRIM_TEST_KEY
+
+  assert.equal(
+    await resolveApiKey({ resolve: async () => ({ value: '   ' }) }, 'JEV_TRIM_TEST_KEY', '  '),
+    '',
+    'a blank key must fall through, not travel as `Bearer    `',
+  )
 })
 
 /** Run `body` with globalThis.fetch replaced, restoring it even on failure. */
@@ -217,6 +259,31 @@ test('the jev tool still reports a genuinely missing key', async () => {
   )
   if (saved === undefined) delete process.env.TYPESAFE_API_KEY
   else process.env.TYPESAFE_API_KEY = saved
+})
+
+test('a blank stored key fails with "no API key", not an opaque 401', async () => {
+  const saved = process.env.TYPESAFE_API_KEY
+  delete process.env.TYPESAFE_API_KEY
+  try {
+    const tool = makeTool(
+      () => ({ resolve: async () => ({ value: '   ' }) }),
+      () => ({ provider: 'typesafe' }),
+    )
+    await withFetchStub(
+      async () => {
+        throw new Error('the request must not leave with a blank key')
+      },
+      async () => {
+        await assert.rejects(
+          tool.execute({ state: 's', questions: { q: { type: 'noul', instructions: 'x' } } }),
+          /no API key for provider "typesafe"/,
+        )
+      },
+    )
+  } finally {
+    if (saved === undefined) delete process.env.TYPESAFE_API_KEY
+    else process.env.TYPESAFE_API_KEY = saved
+  }
 })
 
 test('the jev tool refuses a disabled tool and an oversized state', async () => {
@@ -308,6 +375,122 @@ test('callJev caps an absurd retry-after instead of freezing for hours', async (
   assert.ok(elapsed < 5_000, `must give up promptly, took ${elapsed}ms`)
 })
 
+test('a cancelled call stops retrying instead of sleeping the ladder', async () => {
+  // Cancelled before the first request: nothing may leave.
+  const pre = new AbortController()
+  pre.abort()
+  let calls = 0
+  await assert.rejects(
+    callJev({
+      url: 'https://x/v1/systemone',
+      model: 'm',
+      apiKey: 'k',
+      state: 's',
+      questions: { q: { type: 'noul', instructions: 'x' } },
+      signal: pre.signal,
+      fetchImpl: async () => {
+        calls += 1
+        return new Response('{}', { status: 200 })
+      },
+    }),
+    /jev request cancelled/,
+  )
+  assert.equal(calls, 0, 'no request may leave after the caller cancelled')
+
+  // Cancelled while the 429 backoff sleeps: the turn must not wait it out
+  // (the ladder totals 52s; a cancelled tool must be gone almost at once).
+  const during = new AbortController()
+  calls = 0
+  const started = Date.now()
+  await assert.rejects(
+    callJev({
+      url: 'https://x/v1/systemone',
+      model: 'm',
+      apiKey: 'k',
+      state: 's',
+      questions: { q: { type: 'noul', instructions: 'x' } },
+      signal: during.signal,
+      fetchImpl: async () => {
+        calls += 1
+        setTimeout(() => during.abort(), 10)
+        return new Response('{"error":"busy"}', { status: 429 })
+      },
+    }),
+    /jev request cancelled/,
+  )
+  const elapsed = Date.now() - started
+  assert.equal(calls, 1, 'must not issue another request after the caller cancelled')
+  assert.ok(elapsed < 900, `the cancel must cut the 1s backoff short, took ${elapsed}ms`)
+})
+
+test('the API key never reaches an error message or a ledger record', async () => {
+  const apiKey = 'sk-live-4f8a2c9e01bd7735'
+  const questions = { q: { type: 'noul', instructions: 'x' } }
+  const echo = async () =>
+    new Response(JSON.stringify({ error: `unauthorized header: Bearer ${apiKey}` }), { status: 400 })
+
+  // The helper itself: redact real keys, leave short needles untouched.
+  assert.equal(redactSecret('Bearer sk-live-4f8a2c9e01bd7735 rejected', apiKey), 'Bearer [redacted] rejected')
+  assert.equal(redactSecret('Chec[k] the API key', 'k'), 'Chec[k] the API key')
+  assert.equal(redactSecret(undefined, apiKey), '')
+
+  // An endpoint echoing the request header: the thrown message must be clean.
+  await assert.rejects(
+    callJev({
+      url: 'https://x/v1/systemone',
+      model: 'm',
+      apiKey,
+      state: 's',
+      questions,
+      fetchImpl: echo,
+    }),
+    (error) => {
+      assert.match(error.message, /HTTP 400/)
+      assert.match(error.message, /\[redacted\]/)
+      assert.ok(!error.message.includes(apiKey), 'the key leaked into the error')
+      return true
+    },
+  )
+
+  // …and so must the string the tool persists to the ledger on disk.
+  const records = []
+  const tool = makeTool(
+    () => ({ resolve: async () => ({ value: apiKey }) }),
+    () => ({ provider: 'typesafe', dailyCallLimit: 0, dailyTokenLimit: 0 }),
+    () => ({ summary: () => ({ calls: 0, failures: 0, inputTokens: 0 }), append: (r) => records.push(r) }),
+  )
+  await withFetchStub(echo, async () => {
+    await assert.rejects(tool.execute({ state: 's', questions }), /HTTP 400/)
+  })
+  assert.equal(records.length, 1)
+  assert.match(records[0].error, /\[redacted\]/)
+  assert.ok(!records[0].error.includes(apiKey), 'the key leaked into the ledger record')
+
+  // A network failure is retried, so reach its report through the cancellation
+  // path: the caller aborts during the backoff and the quote must be redacted.
+  const controller = new AbortController()
+  await assert.rejects(
+    callJev({
+      url: 'https://x/v1/systemone',
+      model: 'm',
+      apiKey,
+      state: 's',
+      questions,
+      signal: controller.signal,
+      fetchImpl: async () => {
+        setTimeout(() => controller.abort(), 10)
+        throw new Error(`proxy refused Bearer ${apiKey}`)
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /jev request cancelled/)
+      assert.match(error.message, /\[redacted\]/)
+      assert.ok(!error.message.includes(apiKey), 'the key leaked into the network error')
+      return true
+    },
+  )
+})
+
 test('callJev does not retry a 400', async () => {
   let calls = 0
   const fetchImpl = async () => {
@@ -357,6 +540,39 @@ test('isLoopbackRequest accepts only loopback peers', () => {
   assert.equal(isLoopbackRequest({ socket: { remoteAddress: '192.0.2.10' } }), false)
   assert.equal(isLoopbackRequest({ socket: {} }), false)
   assert.equal(isLoopbackRequest({}), false)
+})
+
+test('the describe bridge never ships a legacy settings apiKey to the browser', async () => {
+  const routes = makeBridgeRoutes({
+    getSettings: () => null,
+    getConfig: () => ({
+      enabled: true,
+      provider: 'typesafe',
+      model: '',
+      baseUrl: '',
+      apiKey: 'sk-legacy-in-settings-123456',
+    }),
+    getCredentials: () => null,
+    getLedger: () => null,
+    probe: async () => ({}),
+  })
+  const describe = routes.find((route) => route.path.endsWith('/describe'))
+  assert.ok(describe, 'the describe route is registered')
+
+  let body = ''
+  const req = { method: 'POST', socket: { remoteAddress: '127.0.0.1' } }
+  const res = {
+    writeHead: () => {},
+    end: (chunk) => {
+      body = String(chunk)
+    },
+  }
+  await describe.handler(req, res)
+
+  const view = JSON.parse(body)
+  assert.equal(view.ok, true)
+  assert.ok(!body.includes('sk-legacy-in-settings-123456'), 'the legacy key leaked into the describe payload')
+  assert.equal(view.value.value.provider, 'typesafe', 'ordinary config values still travel')
 })
 
 test('every provider declares a credential name and a URL (except custom)', () => {
