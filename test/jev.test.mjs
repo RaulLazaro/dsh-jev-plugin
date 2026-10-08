@@ -280,6 +280,34 @@ test('callJev retries a 429 and succeeds on the second attempt', async () => {
   assert.equal(payload.answers.q.noul, 1)
 })
 
+test('callJev caps an absurd retry-after instead of freezing for hours', async () => {
+  let calls = 0
+  const fetchImpl = async () => {
+    calls += 1
+    // A free tier can ask for a retry-after of hours. The call must fail within
+    // a bounded time instead of hanging until that window expires.
+    return new Response('{"error":"Rate limit exceeded"}', {
+      status: 429,
+      headers: { 'retry-after': '15366' },
+    })
+  }
+  const started = Date.now()
+  await assert.rejects(
+    callJev({
+      url: 'https://x/v1/systemone',
+      model: 'jev-1.13-free',
+      apiKey: 'k',
+      state: 's',
+      questions: { q: { type: 'noul', instructions: 'x' } },
+      fetchImpl,
+    }),
+    /rate limit reached and the provider asks to retry in 257 min/,
+  )
+  const elapsed = Date.now() - started
+  assert.equal(calls, 1, 'must not retry when the limit window is hours away')
+  assert.ok(elapsed < 5_000, `must give up promptly, took ${elapsed}ms`)
+})
+
 test('callJev does not retry a 400', async () => {
   let calls = 0
   const fetchImpl = async () => {
