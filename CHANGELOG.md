@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole `describe` payload (documented fields and no extras, no secret
   material, provider map, endpoint errors, read-only flag, usage-or-null), and
   every error answer of `mutate`, `key-set`, `key-unset`, `usage` and `test`.
+- **The official TypeSafe skill, vendored** at `skills/typesafe-ai/SKILL.md`
+  from `github.com/typesafe-ai/skills` @ `65a39f3` (MIT; the upstream `LICENSE`
+  ships unchanged as `LICENSE.upstream`, and the attribution records repo,
+  licence and commit). The README gains an "Official TypeSafe skill" section —
+  atomic judgment per question, `state` as an object with paths, the right
+  primitive, the second-pass rule and confidence bands — plus the
+  `npx skills add typesafe-ai/skills --skill typesafe-ai` install command, and
+  `skills/` now travels in the npm tarball. `test/skill.test.mjs` keeps the
+  frontmatter, the attribution, the README pointer and the tarball list honest.
 
 ### Fixed
 

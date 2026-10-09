@@ -147,6 +147,41 @@ action on it — it is a statistic derived from the distribution, not a guarante
 - Anything needing extended multi-step reasoning — decompose into atomic
   questions and combine the answers in code instead.
 
+## Official TypeSafe skill
+
+This plugin carries the questions; TypeSafe (Jev's maker) publishes the skill
+that teaches how to *design* them: the official
+[`typesafe-ai/skills`](https://github.com/typesafe-ai/skills) repository (MIT),
+documented in the [agent-skill guide](https://docs.typesafe.ai/agent-skill).
+It covers:
+
+- **Atomic judgment per question** — one narrow, coherent judgement per
+  question; split independently useful dimensions instead of asking about a
+  whole document.
+- **`state` as an object with paths** — named JSON fields when the context has
+  several parts, referenced with backticked paths such as
+  `ticket.messages[0].text`. This tool takes `state` as a string, so serialise
+  the object to JSON before sending it.
+- **The right primitive** — `choice` to pick one of a defined set, `noul` for
+  whether a condition holds, `score` for a degree along ordered levels.
+- **The second-pass rule** — batch independent questions about the same state
+  in one request; a second request is warranted only when an earlier answer is
+  needed to fetch evidence, construct new state or determine the next options.
+- **Confidence bands** — read `probabilities` and `confidence` as statistics to
+  validate against your own data and consequences; a cookbook threshold is an
+  example to evaluate, not a rule.
+
+Install it for your agent (project-local by default):
+
+```bash
+npx skills add typesafe-ai/skills --skill typesafe-ai
+```
+
+A vendored copy ships in this repository for reference at
+[`skills/typesafe-ai/SKILL.md`](skills/typesafe-ai/SKILL.md), with the
+unchanged upstream MIT licence in
+[`skills/typesafe-ai/LICENSE.upstream`](skills/typesafe-ai/LICENSE.upstream).
+
 ## Configuration reference
 
 The `jev` settings namespace accepts:

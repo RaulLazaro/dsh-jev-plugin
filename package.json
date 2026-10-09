@@ -23,7 +23,8 @@
     "lib/client.js",
     "lib/ledger.js",
     "cordis.patch.yml",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "skills"
   ],
   "scripts": {
     "test": "node --test"
