@@ -19,3 +19,6 @@ Thumbs.db
 
 # Packed artifacts
 *.tgz
+
+# Editor / patch backups
+*.bak*
