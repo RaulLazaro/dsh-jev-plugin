@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Dedicated contract tests for the settings bridge** (`test/bridge.test.mjs`,
+  29 tests): route registration (the six exact paths under the bridge prefix),
+  both guards on every route (loopback-only `403`, POST-only `405`, loopback
+  checked before the method, no service touched behind a refused guard), the
+  whole `describe` payload (documented fields and no extras, no secret
+  material, provider map, endpoint errors, read-only flag, usage-or-null), and
+  every error answer of `mutate`, `key-set`, `key-unset`, `usage` and `test`.
+- **The official TypeSafe skill, vendored** at `skills/typesafe-ai/SKILL.md`
+  from `github.com/typesafe-ai/skills` @ `65a39f3` (MIT; the upstream `LICENSE`
+  ships unchanged as `LICENSE.upstream`, and the attribution records repo,
+  licence and commit). The README gains an "Official TypeSafe skill" section —
+  atomic judgment per question, `state` as an object with paths, the right
+  primitive, the second-pass rule and confidence bands — plus the
+  `npx skills add typesafe-ai/skills --skill typesafe-ai` install command, and
+  `skills/` now travels in the npm tarball. `test/skill.test.mjs` keeps the
+  frontmatter, the attribution, the README pointer and the tarball list honest.
+
+### Fixed
+
+- **A failing bridge dependency now answers JSON instead of nothing.** An
+  exception escaping a route handler (a settings service mid-restart, an
+  unreadable data directory) used to reach the host web server, which answers
+  an *empty* `400`; the Settings card then died in `response.json()` and showed
+  a parse error instead of the reason. Routes now answer
+  `500 { ok: false, code: "internal-error", message }` — the message, never a
+  stack trace on the wire.
+
 ## [0.2.2] - 2026-10-08
 
 ### Fixed
